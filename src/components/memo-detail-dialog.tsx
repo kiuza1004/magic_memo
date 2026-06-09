@@ -13,10 +13,10 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import type { MemoWithUrls } from "@/components/memo-card";
+import type { Memo } from "@/lib/types";
 
 interface Props {
-  memo: MemoWithUrls | null;
+  memo: Memo | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onDelete: (id: string) => void;
@@ -56,17 +56,13 @@ export function MemoDetailDialog({ memo, open, onOpenChange, onDelete }: Props) 
               ))}
             </div>
 
-            {memo.photo_url && (
+            {memo.photo_data_url && (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={memo.photo_url}
+                src={memo.photo_data_url}
                 alt=""
                 className="w-full rounded-md object-cover max-h-72"
               />
-            )}
-
-            {memo.audio_url && (
-              <audio controls src={memo.audio_url} className="w-full" />
             )}
 
             <section>
@@ -81,7 +77,7 @@ export function MemoDetailDialog({ memo, open, onOpenChange, onDelete }: Props) 
                 정리된 내용
               </h4>
               <p className="leading-relaxed whitespace-pre-wrap">
-                {memo.standardized_content}
+                {memo.content}
               </p>
             </section>
 
@@ -98,14 +94,16 @@ export function MemoDetailDialog({ memo, open, onOpenChange, onDelete }: Props) 
               </section>
             )}
 
-            <section>
-              <h4 className="text-xs font-medium text-muted-foreground mb-1">
-                원본 입력
-              </h4>
-              <p className="leading-relaxed whitespace-pre-wrap text-muted-foreground text-xs">
-                {memo.raw_input}
-              </p>
-            </section>
+            {memo.raw_input && (
+              <section>
+                <h4 className="text-xs font-medium text-muted-foreground mb-1">
+                  원본 입력
+                </h4>
+                <p className="leading-relaxed whitespace-pre-wrap text-muted-foreground text-xs">
+                  {memo.raw_input}
+                </p>
+              </section>
+            )}
           </div>
         </ScrollArea>
 

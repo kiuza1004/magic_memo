@@ -15,7 +15,7 @@ export function SearchBar({ value, onChange }: Props) {
       <Input
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        placeholder="자연어로 검색 (예: 지난주 다이소에서 산 거)"
+        placeholder="제목·태그·내용으로 검색"
         className="pl-9 pr-9 h-11"
       />
       {value && (

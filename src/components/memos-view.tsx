@@ -7,71 +7,61 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SearchBar } from "@/components/search-bar";
 import { CategoryFilter } from "@/components/category-filter";
-import { MemoCard, type MemoWithUrls } from "@/components/memo-card";
+import { MemoCard } from "@/components/memo-card";
 import { MemoDetailDialog } from "@/components/memo-detail-dialog";
 import { MemoInputSheet } from "@/components/memo-input-sheet";
-import { fetchJson } from "@/lib/fetch-json";
-import type { Category } from "@/lib/types";
+import { deleteMemo, listMemos } from "@/lib/idb";
+import type { Category, Memo } from "@/lib/types";
+
+function matches(memo: Memo, q: string): boolean {
+  if (!q) return true;
+  const needle = q.toLowerCase();
+  if (memo.title.toLowerCase().includes(needle)) return true;
+  if (memo.summary.toLowerCase().includes(needle)) return true;
+  if (memo.content.toLowerCase().includes(needle)) return true;
+  if (memo.raw_input.toLowerCase().includes(needle)) return true;
+  if (memo.category.toLowerCase().includes(needle)) return true;
+  if (memo.tags.some((t) => t.toLowerCase().includes(needle))) return true;
+  if (memo.action_items.some((a) => a.toLowerCase().includes(needle)))
+    return true;
+  return false;
+}
 
 export function MemosView() {
-  const [memos, setMemos] = useState<MemoWithUrls[]>([]);
+  const [memos, setMemos] = useState<Memo[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<Category | null>(null);
-  const [selected, setSelected] = useState<MemoWithUrls | null>(null);
+  const [selected, setSelected] = useState<Memo | null>(null);
   const [inputOpen, setInputOpen] = useState(false);
 
-  const fetchList = async (cat: Category | null) => {
-    setLoading(true);
-    try {
-      const url = cat
-        ? `/api/memos?category=${encodeURIComponent(cat)}`
-        : `/api/memos`;
-      const body = await fetchJson<{ memos: MemoWithUrls[] }>(url);
-      setMemos(body.memos ?? []);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "메모를 불러올 수 없어요");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const runSearch = async (q: string) => {
-    setLoading(true);
-    try {
-      const body = await fetchJson<{ memos: MemoWithUrls[] }>(
-        "/api/memos/search",
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ query: q }),
-        },
-      );
-      setMemos(body.memos ?? []);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "검색 중 오류");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    const q = query.trim();
-    const delay = q ? 400 : 0;
-    const id = window.setTimeout(() => {
-      if (q) runSearch(q);
-      else fetchList(category);
-    }, delay);
-    return () => window.clearTimeout(id);
-  }, [query, category]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await listMemos();
+        if (!cancelled) setMemos(list);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "메모를 불러올 수 없어요");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const filtered = useMemo(() => {
-    if (query.trim()) return memos;
-    if (!category) return memos;
-    return memos.filter((m) => m.category === category);
+    const q = query.trim();
+    return memos.filter((m) => {
+      if (category && m.category !== category) return false;
+      if (q && !matches(m, q)) return false;
+      return true;
+    });
   }, [memos, category, query]);
 
-  const onCreated = (m: MemoWithUrls) => {
+  const onCreated = (m: Memo) => {
     setMemos((prev) => [m, ...prev]);
   };
 
@@ -79,8 +69,7 @@ export function MemosView() {
     const prev = memos;
     setMemos((p) => p.filter((m) => m.id !== id));
     try {
-      const res = await fetch(`/api/memos/${id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("삭제 실패");
+      await deleteMemo(id);
       toast.success("삭제되었습니다");
     } catch (e) {
       setMemos(prev);
@@ -102,12 +91,7 @@ export function MemosView() {
 
       <div className="space-y-3 mb-4">
         <SearchBar value={query} onChange={setQuery} />
-        <CategoryFilter
-          value={category}
-          onChange={(c) => {
-            setCategory(c);
-          }}
-        />
+        <CategoryFilter value={category} onChange={setCategory} />
       </div>
 
       <div className="flex-1 space-y-2">

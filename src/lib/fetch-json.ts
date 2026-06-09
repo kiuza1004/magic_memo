@@ -1,6 +1,6 @@
 /**
- * fetch 응답을 안전하게 JSON으로 파싱한다.
- * 빈 본문/비JSON/타임아웃 504 등 어떤 경우에도 의미 있는 에러를 던진다.
+ * fetch 응답을 안전하게 JSON으로 파싱한다. 빈 본문/비JSON/타임아웃에도
+ * 의미 있는 에러를 던진다.
  */
 export async function fetchJson<T = unknown>(
   input: RequestInfo | URL,
@@ -11,8 +11,7 @@ export async function fetchJson<T = unknown>(
 
   if (!text) {
     throw new Error(
-      `서버가 빈 응답을 보냈어요 (HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ""}). ` +
-        `함수 타임아웃이거나 환경변수가 누락됐을 수 있어요. Vercel 로그를 확인하세요.`,
+      `서버가 빈 응답을 보냈어요 (HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ""}).`,
     );
   }
 

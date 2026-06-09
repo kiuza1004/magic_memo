@@ -13,14 +13,8 @@ const sourceIcon = {
   photo: ImageIcon,
 } as const;
 
-export type MemoWithUrls = Memo & {
-  photo_url?: string | null;
-  audio_url?: string | null;
-  score?: number;
-};
-
 interface Props {
-  memo: MemoWithUrls;
+  memo: Memo;
   onClick: () => void;
 }
 
@@ -37,10 +31,10 @@ export function MemoCard({ memo, onClick }: Props) {
       className="p-4 cursor-pointer hover:bg-muted/40 transition-colors gap-2"
     >
       <div className="flex items-start gap-3">
-        {memo.photo_url ? (
+        {memo.photo_data_url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={memo.photo_url}
+            src={memo.photo_data_url}
             alt=""
             className="size-14 rounded-md object-cover flex-shrink-0"
           />

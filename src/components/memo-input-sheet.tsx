@@ -16,25 +16,35 @@ import { Button } from "@/components/ui/button";
 import { VoiceRecorder } from "@/components/voice-recorder";
 import { PhotoInput } from "@/components/photo-input";
 import { fetchJson } from "@/lib/fetch-json";
-import type { MemoWithUrls } from "@/components/memo-card";
+import { addMemo, makeId } from "@/lib/idb";
+import type { Memo, SourceType, StructuredMemo } from "@/lib/types";
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreated: (memo: MemoWithUrls) => void;
+  onCreated: (memo: Memo) => void;
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = () => reject(r.error ?? new Error("파일 읽기 실패"));
+    r.readAsDataURL(file);
+  });
 }
 
 export function MemoInputSheet({ open, onOpenChange, onCreated }: Props) {
-  const [tab, setTab] = useState<"text" | "voice" | "photo">("text");
+  const [tab, setTab] = useState<SourceType>("text");
   const [text, setText] = useState("");
-  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const [voiceText, setVoiceText] = useState("");
   const [photo, setPhoto] = useState<File | null>(null);
   const [photoMemo, setPhotoMemo] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const reset = () => {
     setText("");
-    setAudioBlob(null);
+    setVoiceText("");
     setPhoto(null);
     setPhotoMemo("");
     setTab("text");
@@ -46,45 +56,49 @@ export function MemoInputSheet({ open, onOpenChange, onCreated }: Props) {
       description: "잠시만 기다려주세요.",
     });
     try {
-      let init: RequestInit;
+      let rawInput = "";
+      let imageDataUrl: string | undefined;
+
       if (tab === "text") {
         if (!text.trim()) {
           toast.error("내용을 입력해주세요.", { id: toastId });
           return;
         }
-        init = {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ source_type: "text", raw_input: text }),
-        };
+        rawInput = text.trim();
       } else if (tab === "voice") {
-        if (!audioBlob) {
-          toast.error("음성 녹음이 필요합니다.", { id: toastId });
+        if (!voiceText.trim()) {
+          toast.error("음성 인식 결과가 없어요.", { id: toastId });
           return;
         }
-        const fd = new FormData();
-        fd.set("source_type", "voice");
-        fd.set("file", audioBlob, `voice-${Date.now()}.webm`);
-        init = { method: "POST", body: fd };
+        rawInput = voiceText.trim();
       } else {
         if (!photo) {
           toast.error("사진을 선택해주세요.", { id: toastId });
           return;
         }
-        const fd = new FormData();
-        fd.set("source_type", "photo");
-        fd.set("file", photo);
-        if (photoMemo) fd.set("raw_input", photoMemo);
-        init = { method: "POST", body: fd };
+        imageDataUrl = await readFileAsDataUrl(photo);
+        rawInput = photoMemo.trim();
       }
 
-      const body = await fetchJson<{ memo: MemoWithUrls }>("/api/memos", init);
-
-      toast.success("정리 완료!", {
-        id: toastId,
-        description: body.memo.title,
+      const body = await fetchJson<{ memo: StructuredMemo }>("/api/structure", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: rawInput, imageDataUrl }),
       });
-      onCreated(body.memo);
+
+      const memo: Memo = {
+        ...body.memo,
+        id: makeId(),
+        created_at: Date.now(),
+        source_type: tab,
+        raw_input: rawInput,
+        photo_data_url: imageDataUrl,
+      };
+
+      await addMemo(memo);
+
+      toast.success("정리 완료!", { id: toastId, description: memo.title });
+      onCreated(memo);
       reset();
       onOpenChange(false);
     } catch (e) {
@@ -111,7 +125,7 @@ export function MemoInputSheet({ open, onOpenChange, onCreated }: Props) {
 
         <Tabs
           value={tab}
-          onValueChange={(v) => setTab(v as typeof tab)}
+          onValueChange={(v) => setTab(v as SourceType)}
           className="flex-1 flex flex-col px-6 pb-6"
         >
           <TabsList className="grid grid-cols-3 w-full">
@@ -141,7 +155,7 @@ export function MemoInputSheet({ open, onOpenChange, onCreated }: Props) {
             </TabsContent>
 
             <TabsContent value="voice" className="mt-0">
-              <VoiceRecorder onRecorded={setAudioBlob} />
+              <VoiceRecorder onTranscript={setVoiceText} />
             </TabsContent>
 
             <TabsContent value="photo" className="mt-0 space-y-3">

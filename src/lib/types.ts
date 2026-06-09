@@ -13,23 +13,6 @@ export type Category = (typeof CATEGORIES)[number];
 
 export type SourceType = "text" | "voice" | "photo";
 
-export interface Memo {
-  id: string;
-  created_at: string;
-  updated_at: string;
-  source_type: SourceType;
-  raw_input: string;
-  title: string;
-  summary: string;
-  category: Category;
-  tags: string[];
-  importance: number;
-  action_items: string[];
-  standardized_content: string;
-  photo_path: string | null;
-  audio_path: string | null;
-}
-
 export interface StructuredMemo {
   title: string;
   summary: string;
@@ -37,5 +20,13 @@ export interface StructuredMemo {
   tags: string[];
   importance: number;
   action_items: string[];
-  standardized_content: string;
+  content: string;
+}
+
+export interface Memo extends StructuredMemo {
+  id: string;
+  created_at: number; // epoch ms
+  source_type: SourceType;
+  raw_input: string;
+  photo_data_url?: string;
 }

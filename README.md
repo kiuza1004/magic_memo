@@ -1,101 +1,113 @@
 # Magic Memo
 
-음성·텍스트·사진으로 자유롭게 기록하면 AI가 자동으로 분류·요약하고, 자연어로 바로 찾아주는 개인 라이프로그 메모 앱.
+음성·텍스트·사진 무엇이든 던지면 AI(Claude)가 자동 분류·요약·태깅하는 개인 라이프로그 PWA.
+모든 메모는 브라우저(IndexedDB)에 저장되어 별도의 DB가 필요 없습니다.
 
-## 기술 스택
+## 기능
 
-- **Next.js 16** (App Router, Turbopack) + **TypeScript** + **Tailwind v4** + **shadcn/ui**
-- **Vercel AI Gateway** → Claude Opus 4.7 (구조화·Vision), Whisper (STT), OpenAI Embeddings
-- **Supabase**: Postgres(+pgvector) 저장, Storage(사진/음성), 하이브리드 검색(trgm + cosine)
-- 모바일 우선 PWA. 카메라/마이크 권한 사용.
+- **3가지 입력 방식**
+  - 텍스트: 자유 형식
+  - 음성: 브라우저 내장 Web Speech API로 한국어 실시간 STT
+  - 사진: 카메라/갤러리 → Claude Vision으로 분석
+- **AI 자동 정리** — Claude Opus 4.7이 `save_memo` tool을 호출해 보장된 구조화 JSON 반환
+  - 제목 / 요약 / 카테고리(8종) / 태그(3~5개) / 중요도(1~5) / 할 일 / 정제 본문
+- **로컬 저장** — IndexedDB(`magic-memo` DB). 서버 DB 0개
+- **즉시 검색** — 제목·태그·카테고리·요약·본문 모두 한 번에 매칭
+- **PWA** — `manifest.webmanifest` 포함
 
----
+## 스택
 
-## 1. Supabase 셋업
+| 영역 | 도구 |
+|---|---|
+| 프레임워크 | Next.js 16 (App Router, Turbopack) |
+| UI | Tailwind v4, shadcn/ui, lucide-react, sonner |
+| AI | `@anthropic-ai/sdk` — Claude Opus 4.7 + tool use |
+| 음성 인식 | Web Speech API (`ko-KR`) |
+| 저장 | IndexedDB (`idb`) |
+| 날짜 | date-fns |
 
-1. [supabase.com](https://supabase.com)에서 새 프로젝트 생성 (리전: Seoul 권장).
-2. **SQL Editor**에서 `supabase/migrations/0001_init.sql` 내용을 통째로 실행.
-   - `vector`, `pg_trgm` 익스텐션 활성화
-   - `memos` 테이블 + `search_memos` RPC + 스토리지 버킷(`memo-photos`, `memo-audio`) 생성
-3. **Project Settings → API**에서 아래 3개 값 복사:
-   - `Project URL` → `NEXT_PUBLIC_SUPABASE_URL`
-   - `publishable` (anon public) → `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
-   - `service_role` → `SUPABASE_SERVICE_ROLE_KEY` (절대 노출 금지)
-
-## 2. Vercel AI Gateway 키 발급
-
-1. [Vercel 대시보드 → AI Gateway](https://vercel.com/ai-gateway) 진입.
-2. API Key 생성 후 `.env.local`의 `AI_GATEWAY_API_KEY`에 저장.
-   - 사용 모델: `anthropic/claude-opus-4-7`, `openai/whisper-1`, `openai/text-embedding-3-small`
-   - 각 프로바이더에 결제수단/크레딧이 연결돼 있어야 호출이 성공합니다.
-
-> 로컬에서 Vercel 프로젝트를 링크했다면 `vercel env pull .env.local` 한 번으로 가져올 수 있습니다.
-
-## 3. 로컬 실행
+## 빠른 시작
 
 ```bash
-cp .env.example .env.local       # 위 4개 값 채우기
-npm install
-npm run dev                       # http://localhost:3000
+npm i
+
+# 환경변수 — 단 한 줄
+cp .env.example .env.local
+# .env.local에 ANTHROPIC_API_KEY=sk-... 입력
+
+npm run dev
+# → http://localhost:3000
 ```
 
-모바일에서 테스트하려면 같은 Wi-Fi에서 `npm run dev -- -H 0.0.0.0` 후 `http://<로컬IP>:3000` 접속. (카메라/마이크는 HTTPS 또는 `localhost`에서만 동작)
+### 환경변수
 
-## 4. Vercel 배포
+| 키 | 필수 | 설명 |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | yes | https://console.anthropic.com 에서 발급 |
 
-```bash
-npm i -g vercel
-vercel link
-vercel env add AI_GATEWAY_API_KEY production
-vercel env add NEXT_PUBLIC_SUPABASE_URL production
-vercel env add NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY production
-vercel env add SUPABASE_SERVICE_ROLE_KEY production
-vercel --prod
+이게 전부입니다. DB 셋업·OAuth·Storage 버킷 모두 필요 없습니다.
+
+## 아키텍처
+
+```
+┌─────────────┐
+│   브라우저   │  음성 인식, 사진 캡처, IndexedDB 저장
+└──────┬──────┘
+       │ POST /api/structure { text, imageDataUrl? }
+       ▼
+┌─────────────────────────┐
+│  Next.js Route Handler  │  단 하나의 서버 함수
+│  (Anthropic SDK 호출)   │
+└──────┬──────────────────┘
+       │ tool_choice: save_memo (구조화 출력 강제)
+       ▼
+┌──────────────┐
+│ Claude 4.7   │
+└──────────────┘
 ```
 
-Vercel Functions(Fluid Compute) 기본 타임아웃 300초 — 음성/이미지 처리에 충분합니다.
+1. 사용자가 텍스트/음성 텍스트/이미지를 입력
+2. 클라이언트가 `/api/structure`로 전송
+3. 서버가 Claude에 `tool_choice: { type: 'tool', name: 'save_memo' }`로 요청 → 항상 유효한 구조화 JSON
+4. 클라이언트가 결과를 IndexedDB에 저장
+5. 검색·필터는 모두 클라이언트 인메모리
 
----
+## 배포 (Vercel)
 
-## 디렉토리 구조
+1. 이 저장소를 Vercel에 import
+2. **Environment Variables**에 `ANTHROPIC_API_KEY` 추가
+3. Deploy — Hobby 플랜의 60s 함수 타임아웃 안에서 평균 2~5초로 동작
+
+## 폴더 구조
 
 ```
 src/
-├─ app/
-│  ├─ api/memos/
-│  │  ├─ route.ts            POST(생성·STT·Vision·구조화·저장) / GET(목록)
-│  │  ├─ [id]/route.ts       DELETE
-│  │  └─ search/route.ts     POST(자연어 하이브리드 검색)
-│  ├─ layout.tsx, page.tsx, manifest.ts
-├─ components/
-│  ├─ memos-view.tsx         메인 클라이언트 컨테이너
-│  ├─ memo-input-sheet.tsx   텍스트/음성/사진 입력 시트
-│  ├─ voice-recorder.tsx     MediaRecorder 기반 녹음
-│  ├─ photo-input.tsx        카메라/앨범 입력
-│  ├─ memo-card.tsx, memo-detail-dialog.tsx
-│  ├─ search-bar.tsx, category-filter.tsx
-│  └─ ui/                    shadcn/ui 컴포넌트
-└─ lib/
-   ├─ ai/        structure / embed / transcribe / vision
-   ├─ supabase/  admin (server) / client (browser)
-   └─ types.ts
-supabase/migrations/0001_init.sql
+├── app/
+│   ├── api/structure/route.ts   # 단 하나의 서버 엔드포인트
+│   ├── layout.tsx, page.tsx
+│   ├── manifest.ts
+│   └── globals.css
+├── components/
+│   ├── memos-view.tsx           # 메인 리스트 + 검색 + 필터
+│   ├── memo-input-sheet.tsx     # 새 메모 작성 시트
+│   ├── voice-recorder.tsx       # Web Speech API
+│   ├── photo-input.tsx          # 카메라 / 갤러리
+│   ├── memo-card.tsx, memo-detail-dialog.tsx
+│   ├── search-bar.tsx, category-filter.tsx
+│   └── ui/                      # shadcn 컴포넌트
+└── lib/
+    ├── types.ts                 # Memo, Category, ...
+    ├── idb.ts                   # IndexedDB CRUD
+    ├── anthropic.ts             # 서버 전용 Claude 클라이언트
+    └── fetch-json.ts            # 안전한 JSON fetch
 ```
 
-## 핵심 동작 흐름
+## 알아두면 좋은 것
 
-1. 사용자가 **+** 버튼 → 텍스트/음성/사진 중 하나로 기록
-2. 서버에서 입력 정규화
-   - **음성**: Whisper로 STT → 원문 텍스트
-   - **사진**: Claude Vision으로 설명 + OCR + 사물 키워드 추출 → 통합 텍스트
-   - **텍스트**: 그대로
-3. Claude Opus 4.7 `generateObject` → `{ title, summary, category, tags, importance, action_items, standardized_content }` JSON 구조화
-4. OpenAI 임베딩(1536d) 생성 후 Postgres + pgvector에 저장
-5. 검색: 자연어 쿼리를 임베딩한 뒤 `search_memos` RPC가 trgm(키워드) 0.4 + cosine(의미) 0.6 가중치로 점수 합산
+- **Web Speech API**는 안드로이드 Chrome, 데스크톱 Chrome/Edge에서 동작합니다. iOS Safari는 부분 지원 — 텍스트 입력으로 우회하세요.
+- 메모는 **브라우저별 로컬**입니다. 다른 기기에서 보려면 같은 브라우저에서 접속해야 합니다.
+- 사진은 data URL로 IndexedDB에 저장합니다. 매우 큰 사진은 미리 리사이즈하면 좋습니다.
 
-## 향후 개선
+## 라이선스
 
-- Supabase Auth 연동 후 RLS 정책으로 멀티 유저 지원
-- 음성 입력 후 STT 결과를 사용자에게 미리 보여주고 편집 가능하게
-- 캘린더 뷰(일정), 칸반 뷰(할일)
-- PWA 푸시 알림으로 액션 아이템 리마인드
+MIT
