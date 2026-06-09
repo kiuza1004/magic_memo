@@ -10,6 +10,7 @@ import { CategoryFilter } from "@/components/category-filter";
 import { MemoCard, type MemoWithUrls } from "@/components/memo-card";
 import { MemoDetailDialog } from "@/components/memo-detail-dialog";
 import { MemoInputSheet } from "@/components/memo-input-sheet";
+import { fetchJson } from "@/lib/fetch-json";
 import type { Category } from "@/lib/types";
 
 export function MemosView() {
@@ -26,9 +27,7 @@ export function MemosView() {
       const url = cat
         ? `/api/memos?category=${encodeURIComponent(cat)}`
         : `/api/memos`;
-      const res = await fetch(url);
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? "불러오기 실패");
+      const body = await fetchJson<{ memos: MemoWithUrls[] }>(url);
       setMemos(body.memos ?? []);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "메모를 불러올 수 없어요");
@@ -40,13 +39,14 @@ export function MemosView() {
   const runSearch = async (q: string) => {
     setLoading(true);
     try {
-      const res = await fetch("/api/memos/search", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ query: q }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? "검색 실패");
+      const body = await fetchJson<{ memos: MemoWithUrls[] }>(
+        "/api/memos/search",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ query: q }),
+        },
+      );
       setMemos(body.memos ?? []);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "검색 중 오류");

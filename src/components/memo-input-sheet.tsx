@@ -15,6 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { VoiceRecorder } from "@/components/voice-recorder";
 import { PhotoInput } from "@/components/photo-input";
+import { fetchJson } from "@/lib/fetch-json";
 import type { MemoWithUrls } from "@/components/memo-card";
 
 interface Props {
@@ -45,17 +46,17 @@ export function MemoInputSheet({ open, onOpenChange, onCreated }: Props) {
       description: "잠시만 기다려주세요.",
     });
     try {
-      let res: Response;
+      let init: RequestInit;
       if (tab === "text") {
         if (!text.trim()) {
           toast.error("내용을 입력해주세요.", { id: toastId });
           return;
         }
-        res = await fetch("/api/memos", {
+        init = {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ source_type: "text", raw_input: text }),
-        });
+        };
       } else if (tab === "voice") {
         if (!audioBlob) {
           toast.error("음성 녹음이 필요합니다.", { id: toastId });
@@ -64,7 +65,7 @@ export function MemoInputSheet({ open, onOpenChange, onCreated }: Props) {
         const fd = new FormData();
         fd.set("source_type", "voice");
         fd.set("file", audioBlob, `voice-${Date.now()}.webm`);
-        res = await fetch("/api/memos", { method: "POST", body: fd });
+        init = { method: "POST", body: fd };
       } else {
         if (!photo) {
           toast.error("사진을 선택해주세요.", { id: toastId });
@@ -74,11 +75,10 @@ export function MemoInputSheet({ open, onOpenChange, onCreated }: Props) {
         fd.set("source_type", "photo");
         fd.set("file", photo);
         if (photoMemo) fd.set("raw_input", photoMemo);
-        res = await fetch("/api/memos", { method: "POST", body: fd });
+        init = { method: "POST", body: fd };
       }
 
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? "저장에 실패했어요");
+      const body = await fetchJson<{ memo: MemoWithUrls }>("/api/memos", init);
 
       toast.success("정리 완료!", {
         id: toastId,
