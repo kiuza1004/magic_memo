@@ -25,13 +25,32 @@ interface Props {
   onCreated: (memo: Memo) => void;
 }
 
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(String(r.result));
-    r.onerror = () => reject(r.error ?? new Error("파일 읽기 실패"));
-    r.readAsDataURL(file);
-  });
+// Vercel 함수 body limit(4.5MB) + Anthropic 이미지 권장 크기를 동시에 만족시키기 위해
+// 긴 변 1280px로 다운스케일하고 JPEG 0.85로 인코딩한다.
+async function compressImage(file: File): Promise<string> {
+  const MAX_DIM = 1280;
+  const QUALITY = 0.85;
+  const originalUrl = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error("이미지를 읽을 수 없습니다."));
+      el.src = originalUrl;
+    });
+    const scale = Math.min(1, MAX_DIM / Math.max(img.width, img.height));
+    const w = Math.round(img.width * scale);
+    const h = Math.round(img.height * scale);
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas 컨텍스트를 만들 수 없습니다.");
+    ctx.drawImage(img, 0, 0, w, h);
+    return canvas.toDataURL("image/jpeg", QUALITY);
+  } finally {
+    URL.revokeObjectURL(originalUrl);
+  }
 }
 
 export function MemoInputSheet({ open, onOpenChange, onCreated }: Props) {
@@ -76,7 +95,7 @@ export function MemoInputSheet({ open, onOpenChange, onCreated }: Props) {
           toast.error("사진을 선택해주세요.", { id: toastId });
           return;
         }
-        imageDataUrl = await readFileAsDataUrl(photo);
+        imageDataUrl = await compressImage(photo);
         rawInput = photoMemo.trim();
       }
 

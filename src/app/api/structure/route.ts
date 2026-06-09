@@ -154,8 +154,18 @@ export async function POST(req: NextRequest) {
     const memo = toolUse.input as StructuredMemo;
     return NextResponse.json({ memo });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "알 수 없는 오류";
     console.error("[/api/structure] error:", e);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    // Anthropic SDK 에러는 status/code/message를 풀어서 노출
+    const anyErr = e as {
+      status?: number;
+      message?: string;
+      error?: { error?: { type?: string; message?: string } };
+    };
+    const status = anyErr?.status ?? 500;
+    const apiMsg =
+      anyErr?.error?.error?.message ?? anyErr?.message ?? "알 수 없는 오류";
+    const type = anyErr?.error?.error?.type;
+    const msg = type ? `[${type}] ${apiMsg}` : apiMsg;
+    return NextResponse.json({ error: msg }, { status });
   }
 }

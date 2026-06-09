@@ -17,6 +17,7 @@ type SpeechRecognitionLike = {
   onend: (() => void) | null;
   start: () => void;
   stop: () => void;
+  abort: () => void;
 };
 
 interface SpeechRecognitionEventLike {
@@ -28,6 +29,9 @@ interface SpeechRecognitionEventLike {
 }
 
 type Ctor = new () => SpeechRecognitionLike;
+
+// 안드로이드 Chrome의 무음 자동종료에 대비한 자동 재시작 최대 시간 (10분)
+const MAX_RECORDING_MS = 10 * 60 * 1000;
 
 function getRecognitionCtor(): Ctor | null {
   if (typeof window === "undefined") return null;
@@ -47,75 +51,153 @@ export function VoiceRecorder({ onTranscript }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const shouldRecordRef = useRef(false);
   const startedAtRef = useRef<number>(0);
   const timerRef = useRef<number | null>(null);
+  const launchRef = useRef<() => void>(() => {});
 
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) window.clearInterval(timerRef.current);
-      recognitionRef.current?.stop();
-    };
+  const teardown = useCallback(() => {
+    shouldRecordRef.current = false;
+    if (timerRef.current) {
+      window.clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    const r = recognitionRef.current;
+    if (r) {
+      r.onresult = null;
+      r.onerror = null;
+      r.onend = null;
+      try {
+        r.abort();
+      } catch {
+        /* ignore */
+      }
+      recognitionRef.current = null;
+    }
   }, []);
 
-  const start = useCallback(() => {
-    setError(null);
-    setFinalText("");
-    setInterim("");
+  useEffect(() => () => teardown(), [teardown]);
+
+  const launch = useCallback(() => {
     const Ctor = getRecognitionCtor();
     if (!Ctor) {
       setSupported(false);
       return;
     }
+    const r = new Ctor();
+    r.lang = "ko-KR";
+    r.continuous = true;
+    r.interimResults = true;
+
+    r.onresult = (e) => {
+      let interimChunk = "";
+      let finalAdd = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const res = e.results[i];
+        const t = res[0].transcript;
+        if (res.isFinal) finalAdd += t;
+        else interimChunk += t;
+      }
+      if (finalAdd) {
+        setFinalText((prev) => {
+          const next = (prev + " " + finalAdd).trim();
+          onTranscript(next);
+          return next;
+        });
+      }
+      setInterim(interimChunk);
+    };
+
+    r.onerror = (ev) => {
+      // no-speech, aborted, audio-capture 는 자동 재시작 처리
+      const code = ev.error ?? "unknown";
+      if (code === "no-speech" || code === "aborted") return;
+      if (code === "not-allowed" || code === "service-not-allowed") {
+        shouldRecordRef.current = false;
+        setError("마이크 권한이 거부되었습니다.");
+        return;
+      }
+      setError(`음성 인식 오류: ${code}`);
+    };
+
+    r.onend = () => {
+      setInterim("");
+      const elapsedMs = Date.now() - startedAtRef.current;
+      // 사용자가 계속 녹음 중이고 최대 시간을 넘지 않았다면 재시작
+      if (shouldRecordRef.current && elapsedMs < MAX_RECORDING_MS) {
+        try {
+          launchRef.current();
+        } catch (err) {
+          shouldRecordRef.current = false;
+          setRecording(false);
+          setError(
+            err instanceof Error
+              ? err.message
+              : "재시작 중 오류가 발생했습니다.",
+          );
+        }
+        return;
+      }
+      shouldRecordRef.current = false;
+      setRecording(false);
+      if (timerRef.current) {
+        window.clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+
     try {
-      const r = new Ctor();
-      r.lang = "ko-KR";
-      r.continuous = true;
-      r.interimResults = true;
-      r.onresult = (e) => {
-        let interimChunk = "";
-        let finalAdd = "";
-        for (let i = e.resultIndex; i < e.results.length; i++) {
-          const res = e.results[i];
-          const t = res[0].transcript;
-          if (res.isFinal) finalAdd += t;
-          else interimChunk += t;
-        }
-        if (finalAdd) {
-          setFinalText((prev) => {
-            const next = (prev + " " + finalAdd).trim();
-            onTranscript(next);
-            return next;
-          });
-        }
-        setInterim(interimChunk);
-      };
-      r.onerror = (ev) => {
-        setError(`음성 인식 오류: ${ev.error ?? "unknown"}`);
-      };
-      r.onend = () => {
-        setRecording(false);
-        setInterim("");
-      };
       r.start();
       recognitionRef.current = r;
-      startedAtRef.current = Date.now();
-      setElapsed(0);
-      timerRef.current = window.setInterval(() => {
-        setElapsed(Math.floor((Date.now() - startedAtRef.current) / 1000));
-      }, 250);
-      setRecording(true);
-    } catch (e) {
-      setError(
-        e instanceof Error ? e.message : "음성 인식을 시작할 수 없습니다.",
-      );
+    } catch {
+      // 일부 브라우저는 같은 instance를 빠르게 재시작하면 InvalidState 던짐
+      // 한 틱 후 재시도
+      window.setTimeout(() => {
+        if (shouldRecordRef.current) {
+          try {
+            r.start();
+            recognitionRef.current = r;
+          } catch (err) {
+            shouldRecordRef.current = false;
+            setRecording(false);
+            setError(
+              err instanceof Error ? err.message : "음성 인식 시작 실패",
+            );
+          }
+        }
+      }, 200);
     }
   }, [onTranscript]);
 
+  // launch는 자기 자신을 재귀 호출하므로 ref로 보관해 cycle을 끊는다.
+  useEffect(() => {
+    launchRef.current = launch;
+  }, [launch]);
+
+  const start = useCallback(() => {
+    setError(null);
+    setFinalText("");
+    setInterim("");
+    shouldRecordRef.current = true;
+    startedAtRef.current = Date.now();
+    setElapsed(0);
+    timerRef.current = window.setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startedAtRef.current) / 1000));
+    }, 250);
+    setRecording(true);
+    launchRef.current();
+  }, []);
+
   const stop = useCallback(() => {
-    recognitionRef.current?.stop();
+    shouldRecordRef.current = false;
     if (timerRef.current) {
       window.clearInterval(timerRef.current);
       timerRef.current = null;
+    }
+    try {
+      recognitionRef.current?.stop();
+    } catch {
+      /* ignore */
     }
     setRecording(false);
   }, []);
@@ -169,7 +251,7 @@ export function VoiceRecorder({ onTranscript }: Props) {
       )}
 
       {(finalText || interim) && (
-        <div className="w-full max-w-md rounded-md border bg-muted/30 p-3 text-sm leading-relaxed">
+        <div className="w-full max-w-md rounded-md border bg-muted/30 p-3 text-sm leading-relaxed max-h-48 overflow-y-auto">
           <span>{finalText}</span>
           {interim && (
             <span className="text-muted-foreground">
@@ -195,7 +277,7 @@ export function VoiceRecorder({ onTranscript }: Props) {
 
       <p className="text-xs text-muted-foreground text-center max-w-xs">
         {recording
-          ? "말씀하세요… 다시 누르면 정지됩니다."
+          ? "말씀하세요… 무음이 지속되어도 자동으로 다시 켜집니다 (최대 10분)."
           : finalText
             ? "텍스트가 준비되었습니다. ‘저장’을 눌러주세요."
             : "마이크 버튼을 눌러 한국어로 말하세요."}
