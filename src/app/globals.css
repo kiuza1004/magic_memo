@@ -121,10 +121,43 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html,
   body {
-    @apply bg-background text-foreground;
+    @apply bg-black text-neutral-100;
+    color-scheme: dark;
+    overscroll-behavior-y: none;
   }
   html {
     @apply font-sans;
+  }
+  body {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+@layer utilities {
+  .glow-fuchsia {
+    box-shadow:
+      0 0 60px 0 rgba(217, 70, 239, 0.45),
+      0 0 120px 0 rgba(217, 70, 239, 0.25);
+  }
+  .glow-rose {
+    box-shadow:
+      0 0 60px 0 rgba(244, 63, 94, 0.55),
+      0 0 120px 0 rgba(244, 63, 94, 0.3);
+  }
+  .ring-pulse {
+    animation: ring-pulse 1.4s ease-out infinite;
+  }
+  @keyframes ring-pulse {
+    0% {
+      transform: scale(1);
+      opacity: 0.7;
+    }
+    100% {
+      transform: scale(1.6);
+      opacity: 0;
+    }
   }
 }

@@ -35,11 +35,17 @@ export default function RootLayout({
   return (
     <html
       lang="ko"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} dark h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-background text-foreground">
+      <body className="min-h-svh flex flex-col bg-black text-neutral-100 overflow-hidden">
         {children}
-        <Toaster position="top-center" richColors />
+        <Toaster
+          position="top-center"
+          theme="dark"
+          toastOptions={{
+            className: "!bg-neutral-900 !border-neutral-800 !text-neutral-100",
+          }}
+        />
       </body>
     </html>
   );

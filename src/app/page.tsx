@@ -1,5 +1,5 @@
-import { MemosView } from "@/components/memos-view";
+import { HomeScreen } from "@/components/home-screen";
 
 export default function Home() {
-  return <MemosView />;
+  return <HomeScreen />;
 }
