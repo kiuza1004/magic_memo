@@ -1,112 +1,110 @@
 # Magic Memo
 
 음성·텍스트·사진 무엇이든 던지면 AI(Claude)가 자동 분류·요약·태깅하는 개인 라이프로그 PWA.
-모든 메모는 브라우저(IndexedDB)에 저장되어 별도의 DB가 필요 없습니다.
+**서버 없음. DB 없음. 환경변수 없음.** 모든 데이터는 사용자 브라우저에 보관됩니다.
+
+## 핵심 컨셉
+
+- 정적 HTML로 배포 (Next.js `output: "export"`)
+- 사용자가 자기 Anthropic API 키를 첫 실행 시 직접 붙여넣음 → `localStorage`
+- 브라우저가 Anthropic Messages API를 **직접 호출** (`anthropic-dangerous-direct-browser-access` 헤더)
+- 메모는 IndexedDB에 저장
+
+→ Vercel, Netlify, GitHub Pages, Cloudflare Pages, S3 등 어디든 정적 호스팅으로 배포 가능.
 
 ## 기능
 
 - **3가지 입력 방식**
-  - 텍스트: 자유 형식
-  - 음성: 브라우저 내장 Web Speech API로 한국어 실시간 STT
-  - 사진: 카메라/갤러리 → Claude Vision으로 분석
-- **AI 자동 정리** — Claude Opus 4.7이 `save_memo` tool을 호출해 보장된 구조화 JSON 반환
+  - 마이크 (메인): Web Speech API 한국어 실시간 STT, 무음 자동 재시작 (최대 10분)
+  - 텍스트: 빠른 입력 시트
+  - 카메라: 사진 즉시 캡처 → Claude Vision으로 분석
+- **AI 자동 정리** — Claude Opus 4.7이 `save_memo` tool로 보장된 구조화 JSON 반환
   - 제목 / 요약 / 카테고리(8종) / 태그(3~5개) / 중요도(1~5) / 할 일 / 정제 본문
-- **로컬 저장** — IndexedDB(`magic-memo` DB). 서버 DB 0개
-- **즉시 검색** — 제목·태그·카테고리·요약·본문 모두 한 번에 매칭
-- **PWA** — `manifest.webmanifest` 포함
+- **로컬 저장** — IndexedDB
+- **즉시 검색·필터** — 카테고리 색상 칩, 일자별 타임라인
+- **PWA** — `manifest.webmanifest`, 다크 테마, 모바일 우선 UI
 
 ## 스택
 
 | 영역 | 도구 |
 |---|---|
-| 프레임워크 | Next.js 16 (App Router, Turbopack) |
+| 프레임워크 | Next.js 16 (App Router, Turbopack, static export) |
 | UI | Tailwind v4, shadcn/ui, lucide-react, sonner |
-| AI | `@anthropic-ai/sdk` — Claude Opus 4.7 + tool use |
+| AI | 직접 `fetch` → Anthropic Messages API + tool use |
 | 음성 인식 | Web Speech API (`ko-KR`) |
-| 저장 | IndexedDB (`idb`) |
-| 날짜 | date-fns |
+| 저장 | IndexedDB (`idb`), API 키는 `localStorage` |
 
 ## 빠른 시작
 
 ```bash
 npm i
-
-# 환경변수 — 단 한 줄
-cp .env.example .env.local
-# .env.local에 ANTHROPIC_API_KEY=sk-... 입력
-
 npm run dev
 # → http://localhost:3000
 ```
 
-### 환경변수
+첫 화면에 API 키 입력 다이얼로그가 뜹니다. https://console.anthropic.com/settings/keys 에서 발급한 `sk-ant-...` 키를 붙여넣으면 끝.
 
-| 키 | 필수 | 설명 |
-|---|---|---|
-| `ANTHROPIC_API_KEY` | yes | https://console.anthropic.com 에서 발급 |
+## 빌드 & 정적 export
 
-이게 전부입니다. DB 셋업·OAuth·Storage 버킷 모두 필요 없습니다.
+```bash
+npm run build       # out/ 디렉터리에 정적 파일 생성
+```
+
+`out/`을 그대로 정적 호스팅에 올리면 됩니다.
 
 ## 아키텍처
 
 ```
-┌─────────────┐
-│   브라우저   │  음성 인식, 사진 캡처, IndexedDB 저장
-└──────┬──────┘
-       │ POST /api/structure { text, imageDataUrl? }
-       ▼
 ┌─────────────────────────┐
-│  Next.js Route Handler  │  단 하나의 서버 함수
-│  (Anthropic SDK 호출)   │
-└──────┬──────────────────┘
-       │ tool_choice: save_memo (구조화 출력 강제)
-       ▼
-┌──────────────┐
-│ Claude 4.7   │
-└──────────────┘
+│        브라우저          │
+│                         │
+│  • 마이크/카메라/텍스트  │
+│  • localStorage (key)   │
+│  • IndexedDB (memos)    │
+│           │             │
+│           │ direct fetch + tool_choice: save_memo
+│           ▼             │
+└───────┬─────────────────┘
+        │  HTTPS
+        ▼
+   Anthropic API
+   (Claude Opus 4.7)
 ```
 
-1. 사용자가 텍스트/음성 텍스트/이미지를 입력
-2. 클라이언트가 `/api/structure`로 전송
-3. 서버가 Claude에 `tool_choice: { type: 'tool', name: 'save_memo' }`로 요청 → 항상 유효한 구조화 JSON
-4. 클라이언트가 결과를 IndexedDB에 저장
-5. 검색·필터는 모두 클라이언트 인메모리
+서버 함수도, 환경변수도, 백엔드 DB도 없습니다. 클라이언트만 존재합니다.
 
-## 배포 (Vercel)
+## 보안 메모
 
-1. 이 저장소를 Vercel에 import
-2. **Environment Variables**에 `ANTHROPIC_API_KEY` 추가
-3. Deploy — Hobby 플랜의 60s 함수 타임아웃 안에서 평균 2~5초로 동작
+- API 키는 사용자 브라우저의 `localStorage`에만 존재합니다. 서버로 전송되지 않습니다.
+- 단, **브라우저에서 직접 Anthropic을 호출**하므로 동일 브라우저의 다른 스크립트(확장 프로그램 등)가 키를 볼 수 있습니다. 공용/신뢰할 수 없는 브라우저에서는 사용하지 마세요.
+- 다중 사용자 SaaS가 필요하면 이 구조 대신 서버 프록시로 전환해야 합니다.
 
 ## 폴더 구조
 
 ```
 src/
 ├── app/
-│   ├── api/structure/route.ts   # 단 하나의 서버 엔드포인트
-│   ├── layout.tsx, page.tsx
-│   ├── manifest.ts
-│   └── globals.css
+│   ├── layout.tsx, page.tsx, manifest.ts, globals.css
+│   └── (서버 라우트 없음)
 ├── components/
-│   ├── memos-view.tsx           # 메인 리스트 + 검색 + 필터
-│   ├── memo-input-sheet.tsx     # 새 메모 작성 시트
-│   ├── voice-recorder.tsx       # Web Speech API
-│   ├── photo-input.tsx          # 카메라 / 갤러리
-│   ├── memo-card.tsx, memo-detail-dialog.tsx
-│   ├── search-bar.tsx, category-filter.tsx
-│   └── ui/                      # shadcn 컴포넌트
+│   ├── home-screen.tsx        # 메인 화면 (거대 마이크 버튼)
+│   ├── voice-recorder.tsx     # Web Speech API + 자동 재시작
+│   ├── text-quick-input.tsx   # 텍스트 빠른 입력 시트
+│   ├── memo-sheet.tsx         # 메모 리스트 풀업 시트
+│   ├── api-key-dialog.tsx     # 최초 실행 키 입력
+│   └── ui/                    # shadcn 컴포넌트
 └── lib/
-    ├── types.ts                 # Memo, Category, ...
-    ├── idb.ts                   # IndexedDB CRUD
-    ├── anthropic.ts             # 서버 전용 Claude 클라이언트
-    └── fetch-json.ts            # 안전한 JSON fetch
+    ├── types.ts               # Memo, Category, StructuredMemo
+    ├── structure.ts           # 직접 fetch → Anthropic
+    ├── key-store.ts           # localStorage 키 관리
+    └── idb.ts                 # IndexedDB CRUD
 ```
 
 ## 알아두면 좋은 것
 
-- **Web Speech API**는 안드로이드 Chrome, 데스크톱 Chrome/Edge에서 동작합니다. iOS Safari는 부분 지원 — 텍스트 입력으로 우회하세요.
+- **Web Speech API**는 안드로이드 Chrome, 데스크톱 Chrome/Edge에서 동작합니다. iOS Safari는 부분 지원 — 텍스트로 우회하세요.
 - 메모는 **브라우저별 로컬**입니다. 다른 기기에서 보려면 같은 브라우저에서 접속해야 합니다.
-- 사진은 data URL로 IndexedDB에 저장합니다. 매우 큰 사진은 미리 리사이즈하면 좋습니다.
+- 사진은 longest-side 1280px JPEG q=0.85로 자동 압축 후 data URL로 저장됩니다.
 
 ## 라이선스
 
