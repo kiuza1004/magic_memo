@@ -80,19 +80,19 @@ export function MemoInputSheet({ open, onOpenChange, onCreated }: Props) {
 
       if (tab === "text") {
         if (!text.trim()) {
-          toast.error("내용을 입력해주세요.", { id: toastId });
+          toast.error("내용을 입력해주세요.", { id: toastId, description: undefined });
           return;
         }
         rawInput = text.trim();
       } else if (tab === "voice") {
         if (!voiceText.trim()) {
-          toast.error("음성 인식 결과가 없어요.", { id: toastId });
+          toast.error("음성 인식 결과가 없어요.", { id: toastId, description: undefined });
           return;
         }
         rawInput = voiceText.trim();
       } else {
         if (!photo) {
-          toast.error("사진을 선택해주세요.", { id: toastId });
+          toast.error("사진을 선택해주세요.", { id: toastId, description: undefined });
           return;
         }
         imageDataUrl = await compressImage(photo);
@@ -123,6 +123,7 @@ export function MemoInputSheet({ open, onOpenChange, onCreated }: Props) {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "저장 중 오류", {
         id: toastId,
+        description: undefined,
       });
     } finally {
       setSubmitting(false);
