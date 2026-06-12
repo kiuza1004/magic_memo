@@ -58,6 +58,7 @@ export function VoiceRecorder({
   const shouldRecordRef = useRef(false);
   const startedAtRef = useRef<number>(0);
   const launchRef = useRef<() => void>(() => {});
+  const finalTextRef = useRef("");
 
   const launch = useCallback(() => {
     const Ctor = getRecognitionCtor();
@@ -80,11 +81,10 @@ export function VoiceRecorder({
         else interimChunk += t;
       }
       if (finalAdd) {
-        setFinalText((prev) => {
-          const next = (prev + " " + finalAdd).trim();
-          onTranscriptChange(next);
-          return next;
-        });
+        const next = (finalTextRef.current + " " + finalAdd).trim();
+        finalTextRef.current = next;
+        setFinalText(next);
+        onTranscriptChange(next);
       }
       setInterim(interimChunk);
     };
@@ -131,6 +131,7 @@ export function VoiceRecorder({
     if (recording) {
       shouldRecordRef.current = true;
       startedAtRef.current = Date.now();
+      finalTextRef.current = "";
       const resetId = window.setTimeout(() => {
         setFinalText("");
         setInterim("");

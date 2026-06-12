@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Send, X } from "lucide-react";
-import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 
 interface Props {
   open: boolean;
@@ -46,7 +46,9 @@ export function TextQuickInput({ open, onOpenChange, onSubmit }: Props) {
           >
             <X className="size-4" />
           </button>
-          <span className="text-xs text-neutral-500">텍스트 메모</span>
+          <SheetTitle className="text-xs font-normal text-neutral-500">
+            텍스트 메모
+          </SheetTitle>
           <button
             type="button"
             onClick={submit}

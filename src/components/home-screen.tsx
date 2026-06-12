@@ -1,59 +1,42 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Camera, Mic, Pencil, Settings, List, Sparkles } from "lucide-react";
+import { Mic, Pencil, Settings, List, Sparkles, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
-import { ApiKeyDialog } from "@/components/api-key-dialog";
 import { VoiceRecorder, isSpeechSupported } from "@/components/voice-recorder";
 import { MemoSheet } from "@/components/memo-sheet";
 import { TextQuickInput } from "@/components/text-quick-input";
-import { structureMemo } from "@/lib/structure";
+import {
+  isWebGPUAvailable,
+  isEngineReady,
+  loadEngine,
+  structureMemo,
+} from "@/lib/llm-engine";
 import { addMemo, listMemos, deleteMemo, makeId } from "@/lib/idb";
-import { hasApiKey } from "@/lib/key-store";
 import type { Memo, SourceType } from "@/lib/types";
 
 type Mode = "idle" | "recording" | "processing";
 
-async function compressImage(file: File): Promise<string> {
-  const MAX_DIM = 1280;
-  const QUALITY = 0.85;
-  const originalUrl = URL.createObjectURL(file);
-  try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const el = new Image();
-      el.onload = () => resolve(el);
-      el.onerror = () => reject(new Error("이미지를 읽을 수 없습니다."));
-      el.src = originalUrl;
-    });
-    const scale = Math.min(1, MAX_DIM / Math.max(img.width, img.height));
-    const w = Math.round(img.width * scale);
-    const h = Math.round(img.height * scale);
-    const canvas = document.createElement("canvas");
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("Canvas 컨텍스트를 만들 수 없습니다.");
-    ctx.drawImage(img, 0, 0, w, h);
-    return canvas.toDataURL("image/jpeg", QUALITY);
-  } finally {
-    URL.revokeObjectURL(originalUrl);
-  }
-}
+type EngineUI =
+  | { status: "checking" }
+  | { status: "unsupported" }
+  | { status: "loading"; progress: number; text: string }
+  | { status: "ready" }
+  | { status: "error"; message: string };
 
 export function HomeScreen() {
   const [mode, setMode] = useState<Mode>("idle");
   const [transcript, setTranscript] = useState("");
   const [memos, setMemos] = useState<Memo[]>([]);
-  const [keyDialog, setKeyDialog] = useState(false);
-  const [keyRequired, setKeyRequired] = useState(false);
   const [memoSheet, setMemoSheet] = useState(false);
   const [textInput, setTextInput] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [engineUI, setEngineUI] = useState<EngineUI>({ status: "checking" });
 
-  const cameraRef = useRef<HTMLInputElement>(null);
   const tickRef = useRef<number | null>(null);
   const startedAtRef = useRef(0);
 
+  // 초기 메모 로드 + 엔진 로딩
   useEffect(() => {
     (async () => {
       try {
@@ -63,15 +46,31 @@ export function HomeScreen() {
         toast.error(e instanceof Error ? e.message : "메모를 불러올 수 없어요");
       }
     })();
-    if (!hasApiKey()) {
-      const id = window.setTimeout(() => {
-        setKeyRequired(true);
-        setKeyDialog(true);
-      }, 0);
-      return () => window.clearTimeout(id);
+
+    if (!isWebGPUAvailable()) {
+      setEngineUI({ status: "unsupported" });
+      return;
     }
+    if (isEngineReady()) {
+      setEngineUI({ status: "ready" });
+      return;
+    }
+    setEngineUI({ status: "loading", progress: 0, text: "AI 준비 중…" });
+    loadEngine((report) => {
+      setEngineUI({
+        status: "loading",
+        progress: Math.max(0, Math.min(1, report.progress)),
+        text: report.text || "AI 모델을 받고 있어요…",
+      });
+    })
+      .then(() => setEngineUI({ status: "ready" }))
+      .catch((e: unknown) => {
+        const message = e instanceof Error ? e.message : "AI 준비 실패";
+        setEngineUI({ status: "error", message });
+      });
   }, []);
 
+  // 타이머
   useEffect(() => {
     if (mode !== "recording") {
       if (tickRef.current) {
@@ -84,7 +83,6 @@ export function HomeScreen() {
     tickRef.current = window.setInterval(() => {
       setElapsed(Math.floor((Date.now() - startedAtRef.current) / 1000));
     }, 250);
-    // 시작 시점에 0으로 초기화 (다음 tick 이전에)
     const reset = window.setTimeout(() => setElapsed(0), 0);
     return () => {
       window.clearTimeout(reset);
@@ -95,40 +93,32 @@ export function HomeScreen() {
     };
   }, [mode]);
 
-  const requireKey = (): boolean => {
-    if (!hasApiKey()) {
-      setKeyRequired(true);
-      setKeyDialog(true);
-      toast.error("먼저 API 키를 등록해주세요.");
-      return false;
+  const saveMemo = async (sourceType: SourceType, rawInput: string) => {
+    if (engineUI.status !== "ready") {
+      toast.error("AI가 아직 준비되지 않았어요.");
+      return;
     }
-    return true;
-  };
-
-  const saveMemo = async (
-    sourceType: SourceType,
-    rawInput: string,
-    imageDataUrl?: string,
-  ) => {
-    if (!requireKey()) return;
     setMode("processing");
     const toastId = toast.loading("AI가 정리하고 있어요…");
     try {
-      const structured = await structureMemo({ text: rawInput, imageDataUrl });
+      const structured = await structureMemo({ text: rawInput });
       const memo: Memo = {
         ...structured,
         id: makeId(),
         created_at: Date.now(),
         source_type: sourceType,
         raw_input: rawInput,
-        photo_data_url: imageDataUrl,
       };
       await addMemo(memo);
       setMemos((prev) => [memo, ...prev]);
-      toast.success("정리 완료", { id: toastId, description: memo.title });
+      toast.success("정리 완료", {
+        id: toastId,
+        description: memo.title,
+      });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "오류가 발생했어요", {
         id: toastId,
+        description: undefined,
       });
     } finally {
       setMode("idle");
@@ -137,6 +127,10 @@ export function HomeScreen() {
   };
 
   const onMicTap = () => {
+    if (engineUI.status !== "ready") {
+      toast.error("AI가 아직 준비되지 않았어요.");
+      return;
+    }
     if (mode === "processing") return;
     if (mode === "recording") {
       setMode("idle");
@@ -149,19 +143,7 @@ export function HomeScreen() {
       setTextInput(true);
       return;
     }
-    if (!requireKey()) return;
     setMode("recording");
-  };
-
-  const onPhotoSelected = async (file: File | null) => {
-    if (!file) return;
-    if (!requireKey()) return;
-    try {
-      const dataUrl = await compressImage(file);
-      await saveMemo("photo", "", dataUrl);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "사진 처리 실패");
-    }
   };
 
   const onTextSubmit = async (text: string) => {
@@ -186,6 +168,9 @@ export function HomeScreen() {
   const mm = Math.floor(elapsed / 60).toString().padStart(2, "0");
   const ss = (elapsed % 60).toString().padStart(2, "0");
 
+  const isReady = engineUI.status === "ready";
+  const inputsDisabled = !isReady || mode !== "idle";
+
   return (
     <main className="relative flex flex-col flex-1 overflow-hidden">
       {/* 배경 그라데이션 */}
@@ -198,12 +183,10 @@ export function HomeScreen() {
       <header className="flex items-center justify-between px-5 pt-3 pb-2">
         <button
           type="button"
-          onClick={() => {
-            setKeyRequired(false);
-            setKeyDialog(true);
-          }}
-          className="size-10 grid place-items-center rounded-full text-neutral-400 hover:text-neutral-100 hover:bg-white/5 active:bg-white/10 transition-colors"
+          onClick={() => setMemoSheet(false)}
+          className="size-10 grid place-items-center rounded-full text-neutral-400/40"
           aria-label="설정"
+          disabled
         >
           <Settings className="size-5" />
         </button>
@@ -228,12 +211,10 @@ export function HomeScreen() {
 
       {/* 메인 영역 */}
       <div className="flex-1 flex flex-col items-center justify-center px-6 pb-8">
-        {/* 타이머 */}
         <div className="text-4xl font-mono tabular-nums text-neutral-300 mb-6 h-12">
           {mode === "recording" ? `${mm}:${ss}` : ""}
         </div>
 
-        {/* 마이크 버튼 */}
         <div className="relative">
           {mode === "recording" && (
             <>
@@ -247,13 +228,15 @@ export function HomeScreen() {
           <button
             type="button"
             onClick={onMicTap}
-            disabled={mode === "processing"}
+            disabled={mode === "processing" || !isReady}
             className={`relative size-56 rounded-full grid place-items-center transition-all active:scale-95 ${
               mode === "recording"
                 ? "bg-gradient-to-br from-rose-500 to-rose-700 glow-rose"
                 : mode === "processing"
                   ? "bg-neutral-800"
-                  : "bg-gradient-to-br from-fuchsia-500 to-violet-700 glow-fuchsia"
+                  : isReady
+                    ? "bg-gradient-to-br from-fuchsia-500 to-violet-700 glow-fuchsia"
+                    : "bg-neutral-800"
             }`}
             aria-label={mode === "recording" ? "녹음 정지" : "녹음 시작"}
           >
@@ -270,7 +253,9 @@ export function HomeScreen() {
             ? "말씀하세요. 다시 누르면 저장됩니다."
             : mode === "processing"
               ? "잠시만요…"
-              : "마이크를 눌러 메모하세요."}
+              : isReady
+                ? "마이크를 눌러 메모하세요."
+                : "AI 준비 중…"}
         </p>
       </div>
 
@@ -279,31 +264,12 @@ export function HomeScreen() {
         <button
           type="button"
           onClick={() => setTextInput(true)}
-          disabled={mode !== "idle"}
+          disabled={inputsDisabled}
           className="size-14 rounded-full grid place-items-center bg-white/5 border border-white/10 text-neutral-300 hover:bg-white/10 active:scale-95 transition-all disabled:opacity-30"
           aria-label="텍스트 입력"
         >
           <Pencil className="size-5" />
         </button>
-
-        <button
-          type="button"
-          onClick={() => cameraRef.current?.click()}
-          disabled={mode !== "idle"}
-          className="size-14 rounded-full grid place-items-center bg-white/5 border border-white/10 text-neutral-300 hover:bg-white/10 active:scale-95 transition-all disabled:opacity-30"
-          aria-label="사진 촬영"
-        >
-          <Camera className="size-5" />
-        </button>
-
-        <input
-          ref={cameraRef}
-          type="file"
-          accept="image/*"
-          capture="environment"
-          className="hidden"
-          onChange={(e) => onPhotoSelected(e.target.files?.[0] ?? null)}
-        />
       </div>
 
       {/* 음성 인식 결과 오버레이 */}
@@ -331,16 +297,81 @@ export function HomeScreen() {
         onDelete={onDelete}
       />
 
-      {/* API 키 다이얼로그 */}
-      <ApiKeyDialog
-        open={keyDialog}
-        onOpenChange={setKeyDialog}
-        required={keyRequired}
-        onSaved={() => {
-          setKeyRequired(false);
-          toast.success("키가 저장되었어요");
-        }}
-      />
+      {/* 엔진 로딩 오버레이 */}
+      {engineUI.status !== "ready" && (
+        <EngineOverlay ui={engineUI} />
+      )}
     </main>
+  );
+}
+
+function EngineOverlay({ ui }: { ui: Exclude<EngineUI, { status: "ready" }> }) {
+  return (
+    <div className="absolute inset-0 z-50 bg-black/90 backdrop-blur-xl flex flex-col items-center justify-center px-8">
+      {ui.status === "checking" && (
+        <>
+          <Sparkles className="size-12 text-fuchsia-400 animate-pulse mb-4" />
+          <p className="text-neutral-300">준비 중…</p>
+        </>
+      )}
+
+      {ui.status === "unsupported" && (
+        <>
+          <AlertCircle className="size-12 text-amber-400 mb-4" />
+          <h2 className="text-lg font-medium mb-2">WebGPU 미지원 브라우저</h2>
+          <p className="text-sm text-neutral-400 text-center max-w-sm leading-relaxed">
+            이 앱은 AI 모델을 브라우저에서 직접 실행해 작동합니다.
+            <br />
+            <strong className="text-neutral-200">Chrome 113+</strong> 또는{" "}
+            <strong className="text-neutral-200">Edge 113+</strong>에서 열어주세요.
+            <br />
+            (iOS Safari·Firefox는 현재 미지원)
+          </p>
+        </>
+      )}
+
+      {ui.status === "loading" && (
+        <>
+          <div className="relative mb-6">
+            <Sparkles className="size-12 text-fuchsia-400 animate-pulse" />
+          </div>
+          <h2 className="text-lg font-medium mb-2">AI 모델 준비 중</h2>
+          <p className="text-xs text-neutral-400 mb-6 text-center max-w-sm leading-relaxed">
+            처음 한 번만 받으면 이후엔 즉시 실행됩니다.
+            <br />
+            완전 오프라인·무료로 동작해요.
+          </p>
+          <div className="w-full max-w-xs">
+            <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-fuchsia-500 to-violet-500 transition-all duration-300"
+                style={{ width: `${Math.round(ui.progress * 100)}%` }}
+              />
+            </div>
+            <div className="mt-2 flex items-center justify-between text-xs text-neutral-500 tabular-nums">
+              <span className="truncate pr-2">{ui.text}</span>
+              <span>{Math.round(ui.progress * 100)}%</span>
+            </div>
+          </div>
+        </>
+      )}
+
+      {ui.status === "error" && (
+        <>
+          <AlertCircle className="size-12 text-rose-400 mb-4" />
+          <h2 className="text-lg font-medium mb-2">AI 준비 실패</h2>
+          <p className="text-sm text-neutral-400 text-center max-w-sm leading-relaxed">
+            {ui.message}
+          </p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="mt-6 px-4 py-2 rounded-full bg-fuchsia-500 text-black text-sm font-medium hover:bg-fuchsia-400 active:scale-95 transition-all"
+          >
+            다시 시도
+          </button>
+        </>
+      )}
+    </div>
   );
 }
