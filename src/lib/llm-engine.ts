@@ -2,7 +2,39 @@
 
 import { CATEGORIES, type StructuredMemo } from "@/lib/types";
 
-const MODEL_ID = "Qwen2.5-3B-Instruct-q4f16_1-MLC";
+const MODEL_DESKTOP_F16 = "Qwen2.5-3B-Instruct-q4f16_1-MLC";
+const MODEL_MOBILE_F16 = "Qwen2.5-1.5B-Instruct-q4f16_1-MLC";
+const MODEL_FALLBACK_F32 = "Qwen2.5-1.5B-Instruct-q4f32_1-MLC";
+
+interface WebGPUAdapter {
+  features: { has(name: string): boolean };
+  limits: { maxStorageBufferBindingSize?: number };
+}
+interface WebGPU {
+  requestAdapter(): Promise<WebGPUAdapter | null>;
+}
+
+async function pickModelId(): Promise<string> {
+  try {
+    const gpu = (navigator as Navigator & { gpu?: WebGPU }).gpu;
+    if (!gpu) return MODEL_FALLBACK_F32;
+    const adapter = await gpu.requestAdapter();
+    if (!adapter) return MODEL_FALLBACK_F32;
+    const hasF16 = adapter.features.has("shader-f16");
+    const maxBuf = adapter.limits.maxStorageBufferBindingSize ?? 0;
+    const isHighEnd = maxBuf >= 1 << 30; // 1 GiB → 데스크탑 GPU 추정
+    if (isHighEnd && hasF16) return MODEL_DESKTOP_F16;
+    if (hasF16) return MODEL_MOBILE_F16;
+    return MODEL_FALLBACK_F32;
+  } catch {
+    return MODEL_FALLBACK_F32;
+  }
+}
+
+function isShaderError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  return /ShaderModule|shader|validating compute|index_kernel/i.test(msg);
+}
 
 const SYSTEM_PROMPT = `당신은 비정형 한국어 입력(메모/음성 받아쓰기)을 검색·관리에 최적화된 구조형 데이터로 변환하는 AI입니다.
 
@@ -97,14 +129,33 @@ export async function loadEngine(
   if (!enginePromise) {
     enginePromise = (async () => {
       const { CreateMLCEngine } = await import("@mlc-ai/web-llm");
-      const e = await CreateMLCEngine(MODEL_ID, {
-        initProgressCallback: (report: ProgressReport) => onProgress(report),
-      });
-      engine = e as unknown as MLCEngineLike;
-      return engine;
+      const primary = await pickModelId();
+      const tryLoad = async (id: string) => {
+        const e = await CreateMLCEngine(id, {
+          initProgressCallback: (report: ProgressReport) => onProgress(report),
+        });
+        return e as unknown as MLCEngineLike;
+      };
+      try {
+        engine = await tryLoad(primary);
+      } catch (err) {
+        if (primary !== MODEL_FALLBACK_F32 && isShaderError(err)) {
+          // 모바일 GPU에서 f16 셰이더 컴파일 실패 → f32 폴백으로 재시도
+          onProgress({ progress: 0, text: "호환 모델로 다시 시도 중…" });
+          engine = await tryLoad(MODEL_FALLBACK_F32);
+        } else {
+          throw err;
+        }
+      }
+      return engine!;
     })();
   }
-  await enginePromise;
+  try {
+    await enginePromise;
+  } catch (e) {
+    enginePromise = null; // 실패 시 다음 시도를 허용
+    throw e;
+  }
 }
 
 export async function structureMemo(input: {

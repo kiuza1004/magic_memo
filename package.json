@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "icons": "node scripts/generate-icons.mjs"
   },
   "dependencies": {
     "@mlc-ai/web-llm": "^0.2.84",
@@ -33,6 +34,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.7",
+    "sharp": "^0.35.1",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
